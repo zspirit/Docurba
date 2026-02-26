@@ -7,6 +7,7 @@ from operator import attrgetter
 from typing import Self
 
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.functions import RandomUUID
 from django.db import connection, models
 from django.urls import reverse
 from django.utils import timezone
@@ -253,8 +254,32 @@ class ProcedureStatusChoices(models.TextChoices):
     OPPOSABLE = "opposable", "Opposable"
 
 
+class ProjectManager(models.Manager):
+    pass
+
+
+class FastLoadingProjectManager(ProjectManager):
+    def get_queryset(self) -> Self:
+        # There is no mention of these fields on Nuxt side.
+        to_be_removed_fields = [
+            "test",
+            "is_sudocuh_scot",
+            "initial_perimetre",
+            "current_perimetre_new",
+        ]
+        # Text, Array or JSON fields.
+        heavy_fields = [
+            "epci",
+            "current_perimetre",
+            "doc_type_code",
+            "pac",
+            "towns",
+        ]
+        return super().get_queryset().defer(*to_be_removed_fields, *heavy_fields)
+
+
 class Project(models.Model):
-    id = models.UUIDField(primary_key=True)
+    id = models.UUIDField(primary_key=True, db_default=RandomUUID())
     created_at = models.DateTimeField(db_default=models.functions.Now())
     archived = models.BooleanField(db_default=False)
     name = models.CharField(blank=True, null=True)  # noqa: DJ001
@@ -286,8 +311,8 @@ class Project(models.Model):
         base_field=models.JSONField(blank=True, null=True),
         blank=True,
         null=True,
-    )  # Seems unused
-    current_perimetre_new = models.JSONField(blank=True, null=True)  # Seems usused
+    )
+    current_perimetre_new = models.JSONField(blank=True, null=True)
 
     doc_type = models.CharField()
     doc_type_code = models.TextField(blank=True, null=True)  # noqa: DJ001
@@ -305,10 +330,14 @@ class Project(models.Model):
     region = models.CharField(blank=True, null=True)  # noqa: DJ001
     towns = models.JSONField(blank=True, null=True)
 
+    objects = FastLoadingProjectManager()
+    full_objects = ProjectManager()
+
     class Meta:
         managed = False
         verbose_name = "projet"
         db_table = "projects"
+        base_manager_name = "objects"
 
     def __str__(self) -> str:
         return f"{self.pk} - {self.name}"
@@ -375,6 +404,27 @@ class ProcedureManager(models.Manager):
             .with_communes_counts()
             .select_related("collectivite_porteuse__departement__region")
         )
+
+
+class FastLoadingProcedureManager(ProcedureManager):
+    def get_queryset(self) -> Self:
+        # There is no mention of these fields on Nuxt side.
+        to_be_removed_fields = [
+            "test",
+            "testing",
+            "doc_type_code",
+            "is_sudocuh_scot",
+            "previous_opposable_procedures_ids",
+            "type_code",
+            "initial_perimetre",
+        ]
+        # Text or JSON fields.
+        heavy_fields = [
+            "current_perimetre",
+            "comment_dgd",
+            "volet_qualitatif",
+        ]
+        return super().get_queryset().defer(*to_be_removed_fields, *heavy_fields)
 
 
 class Procedure(models.Model):
@@ -472,11 +522,13 @@ class Procedure(models.Model):
     )
     volet_qualitatif = models.JSONField(blank=True, null=True)
 
-    objects = ProcedureManager.from_queryset(ProcedureQuerySet)()
+    objects = FastLoadingProcedureManager.from_queryset(ProcedureQuerySet)()
+    full_objects = ProcedureManager.from_queryset(ProcedureQuerySet)()
 
     class Meta:
         managed = False
         db_table = "procedures"
+        base_manager_name = "objects"
 
     def __str__(self) -> str:
         return (
@@ -727,8 +779,7 @@ class CollectiviteQuerySet(models.QuerySet):
             .prefetch_related(
                 models.Prefetch(
                     "procedure_set",
-                    Procedure.objects.defer("current_perimetre", "initial_perimetre")
-                    .with_events(avant=avant)
+                    Procedure.objects.with_events(avant=avant)
                     .without_adhesions_count()
                     .order_by("created_at")
                     .filter(
@@ -822,10 +873,8 @@ class CommuneQuerySet(models.QuerySet):
     def with_procedures_principales(
         self, *, avant: date | None = None, with_adhesions_count: bool = True
     ) -> Self:
-        procedures_principales = (
-            Procedure.objects.defer("current_perimetre", "initial_perimetre")
-            .with_events(avant=avant)
-            .filter(parente=None, archived=False)
+        procedures_principales = Procedure.objects.with_events(avant=avant).filter(
+            parente=None, archived=False
         )
         if not with_adhesions_count:
             procedures_principales = procedures_principales.without_adhesions_count()
@@ -842,12 +891,13 @@ class CommuneQuerySet(models.QuerySet):
         ).prefetch_related("deleguee")
 
     def with_scots(self, avant: date | None = None) -> Self:
+        qs = Procedure.objects.with_events(avant=avant).filter(
+            doc_type="SCOT", parente=None, archived=False
+        )
         return self.prefetch_related(
             models.Prefetch(
                 "procedures",
-                Procedure.objects.defer("current_perimetre", "initial_perimetre")
-                .with_events(avant=avant)
-                .filter(doc_type="SCOT", parente=None, archived=False),
+                queryset=qs,
                 to_attr="procedures_principales",
             )
         )

@@ -15,6 +15,7 @@ from core.models import (
     Event,
     EventCategory,
     Procedure,
+    Project,
     TypeDocument,
     ViewCommuneAdhesionsDeep,
 )
@@ -22,6 +23,7 @@ from tests.factories import (
     create_commune,
     create_departement,
     create_groupement,
+    create_procedure,
 )
 
 
@@ -468,6 +470,56 @@ class TestProcedure:
         procedure.perimetre.through.objects.create(commune_id=12, procedure=procedure)
 
         assert procedure.perimetre.through.objects.count() == 1
+
+
+@pytest.mark.django_db
+class TestProcedureManagers:
+    def test_base_manager(self, subtests: pytest.Subtests) -> None:
+        create_procedure()
+        to_be_removed_fields = [
+            "test",
+            "testing",
+            "doc_type_code",
+            "is_sudocuh_scot",
+            "previous_opposable_procedures_ids_id",
+            "type_code",
+            "initial_perimetre",
+        ]
+        heavy_fields = [
+            "current_perimetre",
+            "comment_dgd",
+            "volet_qualitatif",
+            "project_id",
+        ]
+
+        procedure = Procedure.objects.earliest("id")
+        for item in [*to_be_removed_fields, *heavy_fields]:
+            with subtests.test(item, item=item):
+                assert item not in procedure.__dict__
+
+    @pytest.mark.django_db
+    def test_full_objects_manager(self, subtests: pytest.Subtests) -> None:
+        create_procedure()
+        to_be_removed_fields = [
+            "test",
+            "testing",
+            "doc_type_code",
+            "is_sudocuh_scot",
+            "previous_opposable_procedures_ids_id",
+            "type_code",
+            "initial_perimetre",
+        ]
+        heavy_fields = [
+            "current_perimetre",
+            "comment_dgd",
+            "volet_qualitatif",
+            "project_id",
+        ]
+
+        procedure = Procedure.full_objects.earliest("id")
+        for item in [*to_be_removed_fields, *heavy_fields]:
+            with subtests.test(item, item=item):
+                assert item in procedure.__dict__
 
 
 class TestProcedureDates:
@@ -1801,3 +1853,38 @@ class TestCommuneCodeEtat:
             procedure.competence_intercommunalite_code(collectivite_porteuse)
             == expected_code
         )
+
+
+@pytest.mark.django_db
+class TestProjectManagers:
+    def test_base_manager(self, subtests: pytest.Subtests) -> None:
+        Project.objects.create()
+        to_be_removed_fields = []
+        heavy_fields = []
+
+        project = Project.objects.earliest("id")
+        for item in [*to_be_removed_fields, *heavy_fields]:
+            with subtests.test(item, item=item):
+                assert item not in project.__dict__
+
+    @pytest.mark.django_db
+    def test_full_objects_manager(self, subtests: pytest.Subtests) -> None:
+        Project.objects.create()
+        to_be_removed_fields = [
+            "test",
+            "is_sudocuh_scot",
+            "initial_perimetre",
+            "current_perimetre_new",
+        ]
+        heavy_fields = [
+            "epci",
+            "current_perimetre",
+            "doc_type_code",
+            "pac",
+            "towns",
+        ]
+
+        project = Project.full_objects.earliest("id")
+        for item in [*to_be_removed_fields, *heavy_fields]:
+            with subtests.test(item, item=item):
+                assert item in project.__dict__
